@@ -392,21 +392,38 @@ function bm(R){
     for(const ev of JSON.parse(tx).events || []){ if(!ev.segs) continue; const s = ev.segs.map(x => x.utf8 || '').join('').replace(/\n/g, ' ').trim(); if(s) out.push(fmt((ev.tStartMs || 0) / 1000) + '\n' + s); }
     return out.length > 2 ? out.join('\n') : '';
   }
+  const tsCount = t => (String(t).match(TSL) || []).length;
+  const dur = (() => { try{ return document.getElementById('movie_player').getDuration() || 0; }catch(e){ return 0; } })();
+  const enough = n => n > 2 && (!dur || n >= Math.min(30, dur / 90));
+  const TAB = /^\s*(transcript|ข้อความถอดเสียง|การถอดเสียง|คำบรรยาย)\s*$/i;
   function domText(){
-    const els = document.querySelectorAll('ytd-transcript-segment-renderer'), out = [];
-    els.forEach(el => { const a = el.querySelector('.segment-timestamp'), b = el.querySelector('.segment-text'); if(a && b) out.push(a.textContent.trim() + '\n' + b.textContent.trim()); });
-    if(out.length > 2) return out.join('\n');
+    const out = [];
+    document.querySelectorAll('ytd-transcript-segment-renderer').forEach(el => { const a = el.querySelector('.segment-timestamp'), b = el.querySelector('.segment-text'); if(a && b) out.push(a.textContent.trim() + '\n' + b.textContent.trim()); });
+    if(enough(out.length)) return out.join('\n');
     let best = '';
-    document.querySelectorAll('ytd-engagement-panel-section-list-renderer').forEach(p => { const t = p.innerText || ''; if((t.match(TSL) || []).length > (best.match(TSL) || []).length) best = t; });
-    return (best.match(TSL) || []).length > 2 ? best : '';
+    document.querySelectorAll('ytd-engagement-panel-section-list-renderer').forEach(p => {
+      const tid = (p.getAttribute('target-id') || '') + ' ' + (p.id || '');
+      if(/chapter|macro-marker|description|structured/i.test(tid) && !/transcript/i.test(tid)) return;
+      const t = p.innerText || ''; if(tsCount(t) > tsCount(best)) best = t;
+    });
+    return enough(tsCount(best)) ? best : '';
+  }
+  function clickTab(){
+    const c = [...document.querySelectorAll('ytd-engagement-panel-section-list-renderer button, ytd-engagement-panel-section-list-renderer [role=tab], ytd-engagement-panel-section-list-renderer yt-chip-cloud-chip-renderer, chip-shape button')]
+      .find(x => TAB.test(x.textContent || '') && x.getAttribute('aria-selected') !== 'true' && x.getAttribute('aria-pressed') !== 'true');
+    if(c){ c.click(); return true; } return false;
   }
   async function openPanel(){
     const q = () => document.querySelector('ytd-video-description-transcript-section-renderer button');
     let b = q();
     if(!b){ const ex = document.querySelector('ytd-watch-metadata #description-inline-expander #expand, ytd-watch-metadata tp-yt-paper-button#expand'); if(ex){ ex.click(); await sleep(500); b = q(); } }
-    if(!b) b = [...document.querySelectorAll('ytd-watch-flexy button')].find(x => /transcript|ข้อความถอดเสียง|การถอดเสียง/i.test((x.getAttribute('aria-label') || '') + ' ' + x.textContent));
+    if(!b) b = [...document.querySelectorAll('ytd-watch-flexy button')].find(x => /show transcript|แสดงข้อความถอดเสียง|ข้อความถอดเสียง/i.test((x.getAttribute('aria-label') || '') + ' ' + x.textContent));
     if(b) b.click();
-    for(let i = 0; i < 48; i++){ await sleep(250); const t = domText(); if(t){ await sleep(400); return domText(); } }
+    for(let i = 0; i < 60; i++){
+      await sleep(250);
+      if(i % 4 === 1) clickTab();
+      const t = domText(); if(t){ await sleep(600); return domText() || t; }
+    }
     return '';
   }
   (async () => {

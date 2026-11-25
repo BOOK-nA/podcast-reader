@@ -47,6 +47,10 @@ label.f{display:block;font-weight:500;margin:18px 0 6px}
 .parsed{font-size:14px;color:var(--mute);margin-top:6px;min-height:22px}
 .parsed.bad{color:var(--danger)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
+.bmbox{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--panel);border-radius:12px;padding:14px 16px}
+.bmbox>div{flex:1 1 320px}.bmbox p{margin:4px 0 0;font-size:14px;color:var(--mute)}
+.bmbox a{text-decoration:none;display:inline-flex;align-items:center;cursor:grab;white-space:nowrap}
+.or{color:var(--mute);font-size:14px;margin:18px 0 0}
 details.help{margin-top:14px;background:var(--panel);border-radius:10px;padding:10px 14px}
 details.help summary{cursor:pointer;font-weight:500}
 details.help ol{padding-left:22px;margin:8px 0}
@@ -144,6 +148,13 @@ details.help ol{padding-left:22px;margin:8px 0}
   <div class="setup" id="setup">
     <h1>วางลิงก์และ transcript แล้วเริ่มฟัง</h1>
     <p class="lead">ซับจะวิ่งตามเสียง กดคำไหนก็ดูความหมายได้ แล้วบันทึกเก็บไว้ทบทวน</p>
+    <p class="parsed" id="impStatus" role="status"></p>
+    <div class="bmbox">
+      <div><b>ทางลัด: ดึงซับจาก YouTube อัตโนมัติ</b>
+        <p>ลากปุ่มนี้ไปวางที่แถบบุ๊กมาร์ก (ถ้าไม่เห็นแถบ กด Ctrl+Shift+B) จากนั้นเวลาเปิดคลิปบน YouTube ให้กดบุ๊กมาร์กนี้ แล้วคลิปจะเปิดที่นี่พร้อมซับทันที</p></div>
+      <a class="btn primary" id="bmLink" href="#" draggable="true">ส่งไป Podcast Reader</a>
+    </div>
+    <p class="or">หรือวางเองด้านล่าง</p>
     <label class="f" for="url">ลิงก์ YouTube</label>
     <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
     <label class="f" for="raw">Transcript (ต้องมีเวลากำกับ)</label>
@@ -346,11 +357,101 @@ $('#start').addEventListener('click', () => {
   if(!id){ toast('ลิงก์ YouTube ไม่ถูกต้อง'); $('#url').focus(); return; }
   const segsNew = parseTranscript($('#raw').value);
   if(!segsNew.length){ toast('ยังไม่มี transcript ที่มีเวลากำกับ'); $('#raw').focus(); return; }
-  const old = recent.find(r => r.id === id);
-  const s = {id, title: old?.title || '', segs: segsNew.map(x => ({start:+x.start.toFixed(2), end:+x.end.toFixed(2), text:x.text})), lastTime: 0, opened: Date.now()};
-  recent = [s, ...recent.filter(r => r.id !== id)].slice(0, 15); saveRecent();
   $('#url').value = ''; $('#raw').value = ''; $('#parsed').textContent = '';
+  newSession(id, segsNew, '');
+});
+function newSession(id, segsNew, title){
+  const old = recent.find(r => r.id === id);
+  const s = {id, title: title || old?.title || '', segs: segsNew.map(x => ({start:+x.start.toFixed(2), end:+x.end.toFixed(2), text:x.text})), lastTime: 0, opened: Date.now()};
+  recent = [s, ...recent.filter(r => r.id !== id)].slice(0, 15); saveRecent();
   startSession(s, 0);
+}
+
+// ---------- bookmarklet (runs on youtube.com) ----------
+function bm(R){
+  const RO = new URL(R).origin;
+  if(!/(^|\.)youtube\.com$/.test(location.hostname)){ alert('กดปุ่มนี้ตอนเปิดคลิปอยู่บน YouTube'); return; }
+  const id = new URLSearchParams(location.search).get('v');
+  if(!id){ alert('เปิดหน้าคลิป YouTube ก่อน แล้วกดอีกครั้ง'); return; }
+  const w = window.open(R + '#import', '_blank');
+  let payload = null, acked = false;
+  const send = () => { if(payload && w && !w.closed){ try{ w.postMessage(payload, RO); }catch(e){} } };
+  window.addEventListener('message', e => { if(e.origin !== RO) return; const d = e.data || {}; if(d.type === 'pr-ready') send(); if(d.type === 'pr-ok') acked = true; });
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const fmt = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0'); return h ? h + ':' + String(m).padStart(2, '0') + ':' + x : m + ':' + x; };
+  const TSL = /^\s*(\d{1,2}:)?\d{1,2}:\d{2}/gm;
+  async function viaTrack(){
+    const mp = document.getElementById('movie_player');
+    const pr = (mp && mp.getPlayerResponse && mp.getPlayerResponse()) || window.ytInitialPlayerResponse;
+    if(!pr || !pr.videoDetails || pr.videoDetails.videoId !== id) return '';
+    const tr = ((pr.captions || {}).playerCaptionsTracklistRenderer || {}).captionTracks || [];
+    const en = tr.filter(t => /^en/i.test(t.languageCode || ''));
+    const t = en.find(t => t.kind !== 'asr') || en[0]; if(!t || !t.baseUrl) return '';
+    const r = await fetch(t.baseUrl + '&fmt=json3', {credentials:'include'}); const tx = await r.text(); if(!tx) return '';
+    const out = [];
+    for(const ev of JSON.parse(tx).events || []){ if(!ev.segs) continue; const s = ev.segs.map(x => x.utf8 || '').join('').replace(/\n/g, ' ').trim(); if(s) out.push(fmt((ev.tStartMs || 0) / 1000) + '\n' + s); }
+    return out.length > 2 ? out.join('\n') : '';
+  }
+  function domText(){
+    const els = document.querySelectorAll('ytd-transcript-segment-renderer'), out = [];
+    els.forEach(el => { const a = el.querySelector('.segment-timestamp'), b = el.querySelector('.segment-text'); if(a && b) out.push(a.textContent.trim() + '\n' + b.textContent.trim()); });
+    if(out.length > 2) return out.join('\n');
+    let best = '';
+    document.querySelectorAll('ytd-engagement-panel-section-list-renderer').forEach(p => { const t = p.innerText || ''; if((t.match(TSL) || []).length > (best.match(TSL) || []).length) best = t; });
+    return (best.match(TSL) || []).length > 2 ? best : '';
+  }
+  async function openPanel(){
+    const q = () => document.querySelector('ytd-video-description-transcript-section-renderer button');
+    let b = q();
+    if(!b){ const ex = document.querySelector('ytd-watch-metadata #description-inline-expander #expand, ytd-watch-metadata tp-yt-paper-button#expand'); if(ex){ ex.click(); await sleep(500); b = q(); } }
+    if(!b) b = [...document.querySelectorAll('ytd-watch-flexy button')].find(x => /transcript|ข้อความถอดเสียง|การถอดเสียง/i.test((x.getAttribute('aria-label') || '') + ' ' + x.textContent));
+    if(b) b.click();
+    for(let i = 0; i < 48; i++){ await sleep(250); const t = domText(); if(t){ await sleep(400); return domText(); } }
+    return '';
+  }
+  (async () => {
+    let text = '';
+    try{ text = await viaTrack(); }catch(e){}
+    if(!text) text = domText() || await openPanel();
+    if(!text){ if(w) w.close(); alert('ดึงซับไม่ได้ คลิปนี้อาจไม่มีซับภาษาอังกฤษ หรือ YouTube เปลี่ยนหน้าเว็บ ลองเปิด transcript แล้วคัดลอกเอง'); return; }
+    payload = {type:'pr-transcript', id, title: document.title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube$/, ''), text};
+    for(let i = 0; i < 60 && !acked; i++){ send(); await sleep(250); }
+    if(!acked){
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+      let ok = false; try{ ok = document.execCommand('copy'); }catch(e){} ta.remove();
+      alert(ok ? 'ส่งเข้า Podcast Reader ไม่สำเร็จ แต่คัดลอกซับไว้แล้ว ไปวางในช่อง transcript ได้เลย' : 'ส่งเข้า Podcast Reader ไม่สำเร็จ ลองกดอีกครั้ง');
+    }
+  })();
+}
+const READER = location.origin + location.pathname;
+$('#bmLink').href = 'javascript:' + encodeURIComponent('(' + bm.toString() + ')(' + JSON.stringify(READER) + ')');
+$('#bmLink').addEventListener('click', e => { e.preventDefault(); toast('ลากปุ่มนี้ไปวางที่แถบบุ๊กมาร์ก แล้วกดตอนเปิดคลิปบน YouTube'); });
+
+// ---------- receive from bookmarklet ----------
+let importing = location.hash === '#import';
+if(importing){
+  history.replaceState(null, '', location.pathname + location.search);
+  $('#impStatus').textContent = 'กำลังรับซับจาก YouTube...';
+  let n = 0;
+  const iv = setInterval(() => {
+    if(!importing){ clearInterval(iv); return; }
+    if(++n > 80){ clearInterval(iv); importing = false; $('#impStatus').textContent = 'ไม่ได้รับซับจาก YouTube ลองกดบุ๊กมาร์กบนหน้า YouTube อีกครั้ง หรือวาง transcript เองด้านล่าง'; $('#impStatus').className = 'parsed bad'; return; }
+    try{ window.opener && window.opener.postMessage({type:'pr-ready'}, '*'); }catch(e){}
+  }, 500);
+}
+window.addEventListener('message', e => {
+  if(!/^https:\/\/(www|m)\.youtube\.com$/.test(e.origin)) return;
+  const d = e.data; if(!d || d.type !== 'pr-transcript' || !importing) return;
+  importing = false;
+  try{ e.source && e.source.postMessage({type:'pr-ok'}, e.origin); }catch(_){}
+  const id = parseVideoId(String(d.id || '')), text = typeof d.text === 'string' ? d.text.slice(0, 3000000) : '';
+  const sg = parseTranscript(text);
+  if(!id || !sg.length){
+    $('#url').value = id ? 'https://www.youtube.com/watch?v=' + id : ''; $('#raw').value = text; $('#raw').dispatchEvent(new Event('input'));
+    $('#impStatus').textContent = 'ได้รับข้อความแล้ว แต่อ่านเวลาไม่ได้ ตรวจช่องด้านล่างแล้วกดเริ่มฟัง'; $('#impStatus').className = 'parsed bad'; return;
+  }
+  $('#impStatus').textContent = '';
+  newSession(id, sg, String(d.title || '').slice(0, 200));
 });
 function renderRecent(){
   $('#recentBox').hidden = !recent.length;

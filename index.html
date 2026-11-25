@@ -80,6 +80,7 @@ details.help ol{padding-left:22px;margin:8px 0}
 .ln .txt{font-size:17px;line-height:1.55}
 .w{border-radius:4px;cursor:pointer;padding:0 1px}
 .w:hover{background:var(--deep);color:var(--deep-ink)}
+.w.cw{background:var(--deep);color:var(--deep-ink);box-shadow:0 0 0 2px var(--deep)}
 .w.sv{text-decoration:underline dotted 2px;text-underline-offset:4px;text-decoration-color:var(--deep)}
 .hide-subs .ln:not(.reveal) .txt,.hide-subs .now:not(.reveal) .nt{filter:blur(7px);user-select:none}
 .hide-subs .ln:not(.reveal) .w{pointer-events:none}
@@ -196,6 +197,7 @@ details.help ol{padding-left:22px;margin:8px 0}
           <option value="1">1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option>
         </select>
         <button type="button" class="chip" data-set="autoPause" aria-pressed="false">หยุดท้ายประโยค</button>
+        <button type="button" class="chip" data-set="karaoke" aria-pressed="true">ไฮไลต์ทีละคำ</button>
         <button type="button" class="chip" data-set="hide" aria-pressed="false">ซ่อนซับ</button>
         <button type="button" class="chip" data-set="follow" aria-pressed="true">เลื่อนตามเสียง</button>
         <button type="button" class="chip" data-set="pauseOnWord" aria-pressed="true">หยุดเมื่อกดคำ</button>
@@ -259,7 +261,7 @@ const LS = {
 const K = {words:'pr_words', recent:'pr_recent', settings:'pr_settings'};
 let words = LS.get(K.words, []);
 let recent = LS.get(K.recent, []);
-const settings = Object.assign({autoPause:false, hide:false, follow:true, pauseOnWord:true, rate:1}, LS.get(K.settings, {}));
+const settings = Object.assign({autoPause:false, hide:false, follow:true, pauseOnWord:true, karaoke:true, rate:1}, LS.get(K.settings, {}));
 
 // ---------- PARSER-START ----------
 function toSec(t){ const p = t.replace(',', '.').split(':').map(Number); let s = 0; for(const x of p) s = s*60 + x; return s; }
@@ -498,17 +500,44 @@ function onErr(e){
 }
 function applyRate(){ try{ player.setPlaybackRate(+settings.rate); }catch(e){} $('#rate').value = String(settings.rate); }
 function renderTx(){
+  wc = null;
   $('#tx').innerHTML = segs.map((s, i) => `<div class="ln" data-i="${i}"><button type="button" class="tm" tabindex="-1">${fmt(s.start)}</button><div class="txt">${tokensHTML(s.text)}</div></div>`).join('');
 }
 function findSeg(t){ let lo = 0, hi = segs.length - 1, a = -1; while(lo <= hi){ const m = (lo + hi) >> 1; if(segs[m].start <= t + 0.05){ a = m; lo = m + 1; } else hi = m - 1; } return a; }
 function setCur(i){
   const tx = $('#tx'), prev = tx.querySelector('.ln.on');
   if(prev) prev.classList.remove('on', 'reveal');
+  clearWord(); wc = null;
   cur = i; $('#now').classList.remove('reveal');
   if(i < 0) return;
   const el = tx.querySelector(`.ln[data-i="${i}"]`); if(el) el.classList.add('on');
   $('#now').innerHTML = `<span class="nt" data-i="${i}">${tokensHTML(segs[i].text)}</span>`;
   if(settings.follow && el && Date.now() - lastUserScroll > 4000) followTo(el);
+}
+// estimated word-by-word highlight (transcripts only give a start time per line)
+let wc = null;
+function wordCache(i){
+  const ln = document.querySelector(`#tx .ln[data-i="${i}"]`), nw = document.querySelector('#now .nt');
+  const a = ln ? [...ln.querySelectorAll('.w')] : [], b = nw ? [...nw.querySelectorAll('.w')] : [];
+  const base = a.length ? a : b, starts = []; let tot = 0;
+  base.forEach(s => {
+    starts.push(tot);
+    tot += s.textContent.replace(/[^A-Za-z0-9]/g, '').length + 1.6;
+    const nx = s.nextSibling;
+    if(nx && nx.nodeType === 3){ if(/[.!?]/.test(nx.textContent)) tot += 5; else if(/[,;:—–-]/.test(nx.textContent)) tot += 2.5; }
+  });
+  return {i, a, b, starts, tot, k:-1};
+}
+function clearWord(){ if(wc && wc.k >= 0){ wc.a[wc.k]?.classList.remove('cw'); wc.b[wc.k]?.classList.remove('cw'); } if(wc) wc.k = -1; }
+function updateWord(t){
+  if(cur < 0) return;
+  if(!wc || wc.i !== cur) wc = wordCache(cur);
+  if(!wc.starts.length) return;
+  const s = segs[cur], dur = Math.max(0.5, s.end - s.start);
+  const x = Math.min(0.999, Math.max(0, (t - s.start) / dur)) * wc.tot;
+  let k = 0; for(let j = 0; j < wc.starts.length; j++){ if(wc.starts[j] <= x) k = j; else break; }
+  if(k === wc.k) return;
+  clearWord(); wc.k = k; wc.a[k]?.classList.add('cw'); wc.b[k]?.classList.add('cw');
 }
 function followTo(el){
   const tx = $('#tx');
@@ -523,6 +552,7 @@ setInterval(() => {
   if(st === 1 && loopIdx >= 0 && t >= segs[loopIdx].end - 0.05){ player.seekTo(segs[loopIdx].start, true); return; }
   if(st === 1 && settings.autoPause && loopIdx < 0 && cur >= 0 && cur !== pausedAt && t >= segs[cur].end - 0.15 && t < segs[cur].end + 0.5){ player.pauseVideo(); pausedAt = cur; }
   const i = findSeg(t); if(i !== cur) setCur(i);
+  if(settings.karaoke) updateWord(t);
   if(st === 1 && Date.now() - lastSaveT > 5000){ lastSaveT = Date.now(); session.lastTime = Math.floor(t); saveRecent(); }
 }, 150);
 function seekSeg(i, play = true){
@@ -543,7 +573,7 @@ document.querySelectorAll('[data-set]').forEach(b => {
   const k = b.dataset.set;
   const sync = () => { b.setAttribute('aria-pressed', String(!!settings[k])); if(k === 'hide') document.body.classList.toggle('hide-subs', !!settings.hide); };
   sync();
-  b.addEventListener('click', () => { settings[k] = !settings[k]; saveSettings(); sync(); if(k === 'follow' && settings.follow){ lastUserScroll = 0; const el = $('#tx .ln.on'); if(el) followTo(el); } });
+  b.addEventListener('click', () => { settings[k] = !settings[k]; saveSettings(); sync(); if(k === 'karaoke' && !settings.karaoke) clearWord(); if(k === 'follow' && settings.follow){ lastUserScroll = 0; const el = $('#tx .ln.on'); if(el) followTo(el); } });
 });
 
 // clicks in transcript and current line

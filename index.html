@@ -152,7 +152,15 @@ details.help ol{padding-left:22px;margin:8px 0}
     <div class="bmbox">
       <div><b>ทางลัด: ดึงซับจาก YouTube อัตโนมัติ</b>
         <p>ลากปุ่มนี้ไปวางที่แถบบุ๊กมาร์ก (ถ้าไม่เห็นแถบ กด Ctrl+Shift+B) จากนั้นเวลาเปิดคลิปบน YouTube ให้กดบุ๊กมาร์กนี้ แล้วคลิปจะเปิดที่นี่พร้อมซับทันที</p></div>
-      <a class="btn primary" id="bmLink" href="#" draggable="true">ส่งไป Podcast Reader</a>
+      <div class="row" style="margin:0"><a class="btn primary" id="bmLink" href="#" draggable="true">ส่งไป Podcast Reader</a>
+      <button type="button" class="btn" id="bmCopy">คัดลอกโค้ด</button></div>
+      <details class="help" style="flex-basis:100%;margin:0;background:var(--bg)"><summary>ลากไม่ได้? สร้างบุ๊กมาร์กเอง</summary>
+        <ol><li>กดปุ่ม <b>คัดลอกโค้ด</b></li>
+        <li>กด <b>Ctrl+D</b> (Mac: Cmd+D) เพื่อบุ๊กมาร์กหน้านี้ แล้วกด <b>เพิ่มเติม...</b> (More)</li>
+        <li>ช่อง <b>ชื่อ</b> ใส่ <i>ส่งไป Podcast Reader</i> ช่อง <b>URL</b> ลบของเดิมออกแล้ววางโค้ดที่คัดลอก (Ctrl+V)</li>
+        <li>เลือกโฟลเดอร์ <b>แถบบุ๊กมาร์ก</b> แล้วกดบันทึก</li></ol>
+        หรือเปิดหน้าจัดการบุ๊กมาร์ก (Ctrl+Shift+O) กด ⋮ มุมขวาบน แล้วเลือก "เพิ่มบุ๊กมาร์กใหม่" แล้ววางโค้ดในช่อง URL ก็ได้
+      </details>
     </div>
     <p class="or">หรือวางเองด้านล่าง</p>
     <label class="f" for="url">ลิงก์ YouTube</label>
@@ -442,6 +450,11 @@ function bm(R){
 }
 const READER = location.origin + location.pathname;
 $('#bmLink').href = 'javascript:' + encodeURIComponent('(' + bm.toString() + ')(' + JSON.stringify(READER) + ')');
+$('#bmCopy').addEventListener('click', async () => {
+  const code = $('#bmLink').href;
+  let ok = false; try{ await navigator.clipboard.writeText(code); ok = true; }catch(e){ const ta = document.createElement('textarea'); ta.value = code; document.body.appendChild(ta); ta.select(); try{ ok = document.execCommand('copy'); }catch(_){} ta.remove(); }
+  toast(ok ? 'คัดลอกโค้ดแล้ว ไปวางในช่อง URL ของบุ๊กมาร์กใหม่' : 'คัดลอกไม่สำเร็จ');
+});
 $('#bmLink').addEventListener('click', e => { e.preventDefault(); toast('ลากปุ่มนี้ไปวางที่แถบบุ๊กมาร์ก แล้วกดตอนเปิดคลิปบน YouTube'); });
 
 // ---------- receive from bookmarklet ----------

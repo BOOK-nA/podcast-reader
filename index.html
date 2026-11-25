@@ -258,11 +258,15 @@ function parseTranscript(raw){
   const TS = new RegExp('^\\[?' + T + '\\]?(?:\\s*[-–]\\s*|\\s+|$)');
   const U = '(?:seconds?|minutes?|hours?|วินาที|นาที|ชั่วโมง)';
   const LABEL = new RegExp('^\\d+\\s*' + U + '(?:\\s*,?\\s*(?:and\\s+)?\\d+\\s*' + U + ')*$', 'i');
-  const out = []; let cur = null;
+  const GLUED = new RegExp('^' + T + '(\\d+\\s*' + U + '(?:\\s*,?\\s*(?:and\\s+)?\\d+\\s*' + U + ')*)\\s*', 'i');
+  const out = []; let cur = null, doubled = false;
   for(let line of String(raw).replace(/\r/g, '').split('\n')){
     line = line.trim();
     if(!line || /^WEBVTT/.test(line) || /^(NOTE|STYLE|Kind:|Language:)/.test(line) || LABEL.test(line)) continue;
-    let m = line.match(ARROW);
+    if(/^(chapter|บทที่)\s*\d+\s*[:.]/i.test(line)) continue;
+    let m = line.match(GLUED);
+    if(m){ doubled = true; cur = {start:toSec(m[1]), end:null, text:line.slice(m[0].length).trim()}; out.push(cur); continue; }
+    m = line.match(ARROW);
     if(m){ cur = {start:toSec(m[1]), end:toSec(m[2]), text:''}; out.push(cur); continue; }
     if(/^\d+$/.test(line) && (!cur || cur.end != null)) continue;
     m = line.match(TS);
@@ -270,7 +274,19 @@ function parseTranscript(raw){
     if(cur) cur.text += (cur.text ? ' ' : '') + line;
   }
   const clean = t => t.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-  let segs = out.map(s => ({start:s.start, end:s.end, text:clean(s.text)})).filter(s => s.text);
+  const undouble = t => {
+    const w = t.split(' '), r = []; let i = 0;
+    while(i < w.length){
+      let best = 0;
+      for(let k = Math.floor((w.length - i) / 2); k >= 1; k--){
+        let ok = true; for(let j = 0; j < k; j++) if(w[i + j] !== w[i + k + j]){ ok = false; break; }
+        if(ok){ best = k; break; }
+      }
+      if(best){ r.push(...w.slice(i, i + best)); i += best * 2; } else { r.push(w[i]); i++; }
+    }
+    return r.join(' ');
+  };
+  let segs = out.map(s => ({start:s.start, end:s.end, text: doubled ? undouble(clean(s.text)) : clean(s.text)})).filter(s => s.text);
   segs.sort((a, b) => a.start - b.start);
   const res = [];
   for(const s of segs){
